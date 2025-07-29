@@ -56,7 +56,7 @@ arduino-cli core install arduino:samd
 3. **Chat with Claude** - Ask for code, debugging help, or improvements
 4. **Select board and port** - Choose your hardware from dropdowns
 5. **Compile and upload** - One-click compilation and upload to your board
-6. **Monitor serial output** - Real-time serial data with scrolling history
+6. **Monitor serial output** - Automatic real-time serial data with scrolling history
 
 ## Features
 
@@ -64,7 +64,7 @@ arduino-cli core install arduino:samd
 - Load/save sketches with project context awareness
 - Auto-detects your installed Arduino boards and ports
 - Real-time compilation and upload
-- Serial monitor with history and timestamps
+- Serial monitor with auto-updating display and scrolling history
 - Persistent settings (API key, board/port selections)
 
 ## Troubleshooting
