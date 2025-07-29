@@ -14,9 +14,10 @@ A web-based development environment that connects Claude AI with Arduino CLI for
 ## Quick Start
 
 1. **Download/Clone this repository**
-2. **Run `start.bat`** (it will handle everything else)
-3. **Open browser to http://localhost:3000**
-4. **Start coding with Claude!**
+2. **Download `arduino-cli.exe`** and put it in the same folder
+3. **Run `start.bat`** (it will handle everything else)
+4. **Open browser to http://localhost:3000**
+5. **Start coding with Claude!**
 
 ## Prerequisites
 
@@ -29,19 +30,18 @@ A web-based development environment that connects Claude AI with Arduino CLI for
 
 ### 2. Install Arduino CLI
 
-**Download:** https://arduino.github.io/arduino-cli/installation/
+**Easy Method (Recommended):**
+1. Download `arduino-cli.exe` from: https://arduino.github.io/arduino-cli/installation/
+2. **Put `arduino-cli.exe` directly in your project folder** (same folder as `start.bat`)
+3. That's it! No PATH configuration needed.
 
-**Windows Installation:**
-1. Download the Windows zip file
-2. Extract to a folder (e.g., `C:\arduino-cli\`)
-3. Add the folder to your PATH:
-   - Search "Environment Variables" in Start Menu
-   - Click "Environment Variables"
-   - Under "System Variables", find "Path" and click "Edit"
-   - Click "New" and add your arduino-cli folder path
-   - Click "OK" to save
+**Alternative Method:**
+1. Download the Windows zip file and extract somewhere (e.g., `C:\arduino-cli\`)
+2. Add the folder to your PATH (see Environment Variables in Windows)
 
-**Verify installation:** Open Command Prompt and type `arduino-cli version`
+**Verify installation:** 
+- If using local method: Double-click `arduino-cli.exe` (should show help)
+- If using PATH method: Open Command Prompt and type `arduino-cli version`
 
 ### 3. Configure Arduino CLI for Your Boards
 
@@ -183,9 +183,11 @@ The bridge server provides these endpoints:
 ## Troubleshooting
 
 ### "Arduino CLI not found"
-- Make sure Arduino CLI is installed and in your PATH
+- **If using local method:** Make sure `arduino-cli.exe` is in the same folder as `start.bat`
+- **If using PATH method:** Make sure Arduino CLI is installed and in your PATH
+- Try double-clicking `arduino-cli.exe` directly to test it
 - Restart Command Prompt after PATH changes
-- Try running `arduino-cli version` in Command Prompt
+- For local method: Right-click `arduino-cli.exe` → Properties → Unblock if downloaded from internet
 
 ### "No boards detected"
 - Check USB cable connection
@@ -237,13 +239,14 @@ Edit `public/index.html` and add options to the board-select dropdown:
 
 ```
 arduino-claude-bridge/
-├── server.js              # Bridge server (Node.js)
-├── package.json           # Dependencies
-├── start.bat             # Windows startup script
+├── arduino-cli.exe       # Arduino CLI executable (download separately)
+├── server.js            # Bridge server (Node.js)
+├── package.json         # Dependencies
+├── start.bat           # Windows startup script
 ├── public/
-│   └── index.html        # Web frontend
-├── sketches/             # Generated Arduino sketches
-└── README.md            # This file
+│   └── index.html      # Web frontend
+├── sketches/           # Generated Arduino sketches
+└── README.md          # This file
 ```
 
 ## Safety Notes
