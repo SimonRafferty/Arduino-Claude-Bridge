@@ -1,22 +1,25 @@
 # Arduino Claude Bridge
 
-A web-based development environment that connects Claude AI with Arduino CLI for seamless embedded development. Perfect for work with ESP32, Teensy, and SAMD21 boards.
+A web-based development environment that connects Claude AI with Arduino CLI for seamless embedded development. Perfect for rapid prototyping with ESP32, Teensy, and SAMD21 boards.
 
 ## Features
 
 - **Web-based chat interface** - Talk to Claude about Arduino projects
+- **Automatic Arduino integration** - Uses your existing Arduino IDE configuration and installed boards
+- **Dynamic board detection** - Shows only the boards you have cores installed for
+- **Sketchbook integration** - Can save sketches to your Arduino sketchbook folder
 - **Direct compilation** - Compile sketches with one click
 - **Automatic upload** - Upload to your boards without leaving the browser  
 - **Serial monitoring** - View output in real-time
-- **Multi-board support** - ESP32 variants, Teensy, SAMD21
+- **Multi-board support** - Any boards you have installed (ESP32, Arduino, Teensy, etc.)
 - **Error feedback** - Compilation errors automatically sent back to Claude for fixes
 
 ## Quick Start
 
 1. **Download/Clone this repository**
 2. **Download `arduino-cli.exe`** and put it in the same folder
-3. **Run `start.bat`** (it will handle everything else)
-4. **Open browser to http://localhost:3000**
+3. **Double-click `start.bat`** 
+4. **When you see "Server running"**, double-click `open-browser.bat` OR manually open browser to http://localhost:3000
 5. **Start coding with Claude!**
 
 ## Prerequisites
@@ -45,9 +48,11 @@ A web-based development environment that connects Claude AI with Arduino CLI for
 
 ### 3. Configure Arduino CLI for Your Boards
 
+**The bridge will automatically detect boards from your existing Arduino IDE installation.** If you need additional boards:
+
 **ESP32 Setup:**
 ```bash
-arduino-cli core update-index
+arduino-cli core update-index --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 arduino-cli core install esp32:esp32
 ```
 
@@ -57,11 +62,14 @@ arduino-cli core update-index --additional-urls https://www.pjrc.com/teensy/pack
 arduino-cli core install teensy:avr
 ```
 
-**SAMD21 Setup:**
+**Additional Arduino Boards:**
 ```bash
 arduino-cli core update-index
-arduino-cli core install arduino:samd
+arduino-cli core install arduino:samd    # For MKR boards, Nano 33 IoT, etc.
+arduino-cli core install arduino:mbed_nano  # For Nano 33 BLE
 ```
+
+*Note: The web interface will automatically show all boards from your installed cores.*
 
 ## Installation
 
@@ -109,12 +117,12 @@ npm start
 ### 3. Example Conversation
 
 ```
-You: "Write code for ESP32 that reads a temperature sensor on pin A0 and prints the value"
+You: "Write code for ESP32 that blinks an LED on pin 2 with a 1-second interval"
 
-Claude: "Here's code for reading a temperature sensor..."
+Claude: "Here's code for blinking an LED..."
 [Code appears in chat and is ready for compilation]
 
-[Click Compile] → [Click Upload] → [Serial monitor shows temperature readings]
+[Click Compile] → [Click Upload] → [LED starts blinking on your board]
 ```
 
 ### 4. Advanced Features
@@ -125,55 +133,62 @@ Claude: "Here's code for reading a temperature sensor..."
 
 **Multiple Sketches:**
 - Change the sketch name before compiling
-- Organize different effects projects
+- Organize different projects and experiments
 
 **Serial Monitoring:**
 - Auto-refreshes every 5 seconds
 - Click "Read Serial" for immediate update
-- Useful for debugging effects timing
+- Useful for debugging and monitoring sensor data
 
 ## Supported Boards
 
+**The bridge automatically detects and displays all boards from your Arduino installation.** Common boards include:
+
 **ESP32 Family:**
-- ESP32 Dev Module (`esp32:esp32:esp32`)
-- ESP32-S3 (`esp32:esp32:esp32s3`)
-- ESP32-C3 (`esp32:esp32:esp32c3`)
+- ESP32 Dev Module, ESP32-S2, ESP32-S3, ESP32-C3, etc.
+
+**Arduino Family:**
+- Arduino Uno, Nano, Mega, Leonardo
+- Arduino MKR series (MKR1000, MKR WiFi 1010, etc.)
+- Arduino Nano 33 IoT, Nano 33 BLE
 
 **Teensy Family:**
-- Teensy 4.0 (`teensy:avr:teensy40`)
-- Teensy 4.1 (`teensy:avr:teensy41`)
+- Teensy 3.x, 4.0, 4.1, LC
 
-**SAMD21 Family:**
-- Arduino Zero (`arduino:samd:arduino_zero_native`)
-- Arduino MKR1000 (`arduino:samd:mkr1000`)
+**Other Boards:**
+- Any board supported by Arduino CLI cores you have installed
 
-*Note: More boards can be added by editing the dropdown in index.html*
+*The board dropdown will show only the boards you have cores installed for, making selection easier and preventing configuration errors.*
 
-## Special Effects Applications
+## Development Applications
 
 This tool is particularly useful for:
 
 **Sensor Integration:**
-- Rapid prototyping of accelerometers, pressure sensors
-- Testing sensor fusion for motion effects
-- Calibrating environmental sensors
+- Rapid prototyping of accelerometers, pressure sensors, temperature sensors
+- Testing sensor fusion and data processing
+- Calibrating and testing environmental sensors
 
-**Effect Controllers:**
-- Programming multiple ESP32s for synchronized effects
-- Teensy-based high-speed servo control
-- SAMD21 for precise timing applications
+**Hardware Controllers:**
+- Programming multiple microcontrollers for synchronized operation
+- High-speed servo and motor control systems
+- Precise timing applications and real-time control
 
 **Development Workflow:**
-- Quick iteration on effect sequences
-- Real-time debugging during setup
-- Automated compilation for multiple controller variants
+- Quick iteration on embedded software projects
+- Real-time debugging during development and testing
+- Automated compilation for multiple board variants
+- Learning embedded programming with AI assistance
 
 ## API Endpoints
 
 The bridge server provides these endpoints:
 
 - `GET /api/health` - Check Arduino CLI status
+- `GET /api/config` - Get Arduino configuration and sketchbook location
 - `GET /api/boards` - List connected boards/ports
+- `GET /api/boards/available` - List all available boards from installed cores
+- `POST /api/sketch` - Save Arduino sketch (can save to sketchbook folder)
 - `POST /api/compile` - Compile Arduino sketch
 - `POST /api/upload` - Upload sketch to board
 - `GET /api/monitor/:port` - Read serial output
@@ -195,10 +210,11 @@ The bridge server provides these endpoints:
 - Click "Refresh Ports" button
 - For ESP32: Install CP210x or CH340 drivers
 
-### "Compilation failed"
-- Check that the correct core is installed
-- Ask Claude to fix the code based on error messages
-- Verify board selection matches your hardware
+### "No boards in dropdown" or "Loading boards..."
+- Make sure you have Arduino cores installed: `arduino-cli core list`
+- Install cores for your boards (see configuration section above)
+- Check the browser console for error messages
+- The dropdown will show "Loading boards..." until it gets a response from Arduino CLI
 
 ### "Upload failed"
 - Ensure correct port is selected
@@ -206,10 +222,12 @@ The bridge server provides these endpoints:
 - Try pressing reset button during upload
 - For ESP32: Hold BOOT button during upload if needed
 
-### Port Access Issues
-- Close Arduino IDE if it's open
-- Close other serial terminal programs
-- Restart the bridge server
+### "Can't connect to localhost:3000"
+- Make sure the server is actually running (you should see "Server running on http://localhost:3000")
+- Check for error messages when running `start.bat`
+- Try running `node server.js` directly to see detailed error messages
+- Make sure port 3000 isn't being used by another program
+- Check Windows Firewall isn't blocking the connection
 
 ## Development
 
@@ -242,7 +260,8 @@ arduino-claude-bridge/
 ├── arduino-cli.exe       # Arduino CLI executable (download separately)
 ├── server.js            # Bridge server (Node.js)
 ├── package.json         # Dependencies
-├── start.bat           # Windows startup script
+├── start.bat           # Start the server
+├── open-browser.bat    # Open browser to the app
 ├── public/
 │   └── index.html      # Web frontend
 ├── sketches/           # Generated Arduino sketches
@@ -251,13 +270,27 @@ arduino-claude-bridge/
 
 ## Safety Notes
 
+**For Embedded Development:**
+- Always test code in safe environments before deploying to production
+- Use proper isolation and protection for high-voltage or high-current applications
+- Follow standard electrical safety practices and component ratings
+- This tool is for development and prototyping - production systems should have additional safety layers and testing
+- Be mindful of proper power supply design and thermal considerations
+
 ## License
 
 MIT License - See LICENSE file for details
 
 ## Contributing
 
-This is a prototype designed for special effects work. Feel free to fork and adapt for your specific needs!
+This is an open-source tool designed for Arduino developers of all kinds. Feel free to fork, contribute improvements, and adapt for your specific needs!
+
+Potential areas for contribution:
+- Additional board support
+- Claude API integration
+- Improved UI/UX
+- Library management features
+- Serial plotter functionality
 
 ## Support
 
