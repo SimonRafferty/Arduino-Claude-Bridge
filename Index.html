@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arduino Claude Bridge</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: #2d2d2d;
+            padding: 1rem;
+            border-bottom: 2px solid #444;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            color: #00d4aa;
+            font-size: 1.5rem;
+        }
+
+        .status {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .status-item {
+            padding: 0.5rem 1rem;
+            background: #333;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .status-item.connected {
+            background: #0a7c42;
+        }
+
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .chat-section {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            border-right: 2px solid #444;
+        }
+
+        .arduino-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #252525;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: #1e1e1e;
+        }
+
+        .message {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-radius: 8px;
+            max-width: 90%;
+        }
+
+        .message.user {
+            background: #0056b3;
+            margin-left: auto;
+        }
+
+        .message.claude {
+            background: #2d2d2d;
+        }
+
+        .code-block {
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 1rem;
+            margin: 0.5rem 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+
+        .chat-input {
+            padding: 1rem;
+            background: #2d2d2d;
+            border-top: 1px solid #444;
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .chat-input textarea {
+            flex: 1;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 0.75rem;
+            color: #e0e0e0;
+            resize: vertical;
+            min-height: 60px;
+            font-family: inherit;
+        }
+
+        .chat-input button {
+            background: #00d4aa;
+            color: #1a1a1a;
+            border: none;
+            border-radius: 4px;
+            padding: 0.75rem 1.5rem;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .chat-input button:hover {
+            background: #00b894;
+        }
+
+        .arduino-controls {
+            padding: 1rem;
+            border-bottom: 1px solid #444;
+        }
+
+        .control-group {
+            margin-bottom: 1rem;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: bold;
+            color: #00d4aa;
+        }
+
+        .control-group select,
+        .control-group input {
+            width: 100%;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 0.5rem;
+            color: #e0e0e0;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+
+        .action-buttons button {
+            flex: 1;
+            background: #444;
+            color: #e0e0e0;
+            border: none;
+            border-radius: 4px;
+            padding: 0.75rem;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .action-buttons button:hover {
+            background: #555;
+        }
+
+        .action-buttons button.compile {
+            background: #e67e22;
+        }
+
+        .action-buttons button.upload {
+            background: #27ae60;
+        }
+
+        .action-buttons button:disabled {
+            background: #333;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .serial-monitor {
+            flex: 1;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .serial-output {
+            flex: 1;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            padding: 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            color: #0fa;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #444;
+            border-radius: 50%;
+            border-top-color: #00d4aa;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            color: #e74c3c;
+        }
+
+        .success {
+            color: #27ae60;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 Arduino Claude Bridge</h1>
+        <div class="status">
+            <div class="status-item" id="arduino-status">Arduino CLI: Checking...</div>
+            <div class="status-item" id="board-status">No board selected</div>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="chat-section">
+            <div class="chat-messages" id="chat-messages">
+                <div class="message claude">
+                    <strong>Claude:</strong> Hi! I'm ready to help you with Arduino development. Ask me to write code, explain concepts, or debug issues. When you get code from me, you can compile and upload it directly using the controls on the right!
+                </div>
+            </div>
+            
+            <div class="chat-input">
+                <textarea id="user-input" placeholder="Ask Claude to write Arduino code..."></textarea>
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+
+        <div class="arduino-section">
+            <div class="arduino-controls">
+                <div class="control-group">
+                    <label for="board-select">Board:</label>
+                    <select id="board-select">
+                        <option value="">Select Board...</option>
+                        <option value="esp32:esp32:esp32">ESP32 Dev Module</option>
+                        <option value="esp32:esp32:esp32s3">ESP32-S3</option>
+                        <option value="esp32:esp32:esp32c3">ESP32-C3</option>
+                        <option value="teensy:avr:teensy40">Teensy 4.0</option>
+                        <option value="teensy:avr:teensy41">Teensy 4.1</option>
+                        <option value="arduino:samd:arduino_zero_native">Arduino Zero</option>
+                        <option value="arduino:samd:mkr1000">Arduino MKR1000</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label for="port-select">Port:</label>
+                    <select id="port-select">
+                        <option value="">Select Port...</option>
+                    </select>
+                    <button onclick="refreshPorts()" style="margin-top: 0.5rem; width: 100%;">Refresh Ports</button>
+                </div>
+
+                <div class="action-buttons">
+                    <button class="compile" onclick="compileSketch()" id="compile-btn">Compile</button>
+                    <button class="upload" onclick="uploadSketch()" id="upload-btn">Upload</button>
+                </div>
+
+                <div class="control-group" style="margin-top: 1rem;">
+                    <label for="sketch-name">Sketch Name:</label>
+                    <input type="text" id="sketch-name" value="effects_sketch" placeholder="Enter sketch name">
+                </div>
+            </div>
+
+            <div class="serial-monitor">
+                <label style="margin-bottom: 0.5rem; color: #00d4aa; font-weight: bold;">Serial Monitor</label>
+                <div class="serial-output" id="serial-output">Waiting for serial data...</div>
+                <button onclick="readSerial()" style="margin-top: 0.5rem;">Read Serial</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentCode = '';
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            checkArduinoStatus();
+            refreshPorts();
+            
+            // Allow Enter to send messages (Shift+Enter for new line)
+            document.getElementById('user-input').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+        });
+
+        async function checkArduinoStatus() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                
+                const statusElement = document.getElementById('arduino-status');
+                if (data.arduino_cli) {
+                    statusElement.textContent = 'Arduino CLI: Ready';
+                    statusElement.classList.add('connected');
+                } else {
+                    statusElement.textContent = 'Arduino CLI: Not Found';
+                    statusElement.classList.remove('connected');
+                }
+            } catch (error) {
+                document.getElementById('arduino-status').textContent = 'Arduino CLI: Error';
+            }
+        }
+
+        async function refreshPorts() {
+            try {
+                const response = await fetch('/api/boards');
+                const data = await response.json();
+                
+                const portSelect = document.getElementById('port-select');
+                portSelect.innerHTML = '<option value="">Select Port...</option>';
+                
+                if (data.success && data.stdout) {
+                    // Parse board list output
+                    const lines = data.stdout.split('\n');
+                    lines.forEach(line => {
+                        if (line.includes('COM') || line.includes('/dev/')) {
+                            const parts = line.split(/\s+/);
+                            const port = parts[0];
+                            if (port) {
+                                const option = document.createElement('option');
+                                option.value = port;
+                                option.textContent = line.trim();
+                                portSelect.appendChild(option);
+                            }
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error refreshing ports:', error);
+            }
+        }
+
+        function addMessage(sender, content, isCode = false) {
+            const messagesContainer = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            if (isCode) {
+                messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Claude'}:</strong><div class="code-block">${content}</div>`;
+                if (sender === 'claude') {
+                    currentCode = content;
+                }
+            } else {
+                messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Claude'}:</strong> ${content}`;
+            }
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('user-input');
+            const message = input.value.trim();
+            
+            if (!message) return;
+            
+            addMessage('user', message);
+            input.value = '';
+            
+            // Add loading message
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message claude';
+            loadingDiv.innerHTML = '<strong>Claude:</strong> <span class="loading"></span> Thinking...';
+            document.getElementById('chat-messages').appendChild(loadingDiv);
+            
+            // Note: In a real implementation, you'd integrate with Claude's API here
+            // For now, this is a placeholder
+            setTimeout(() => {
+                loadingDiv.remove();
+                addMessage('claude', 'This is a placeholder response. In the full implementation, this would connect to Claude\'s API to generate Arduino code based on your request. The generated code would appear here and be ready for compilation.');
+            }, 2000);
+        }
+
+        async function compileSketch() {
+            const board = document.getElementById('board-select').value;
+            const sketchName = document.getElementById('sketch-name').value;
+            
+            if (!board) {
+                alert('Please select a board');
+                return;
+            }
+            
+            if (!currentCode) {
+                alert('No code to compile. Ask Claude to generate some Arduino code first!');
+                return;
+            }
+            
+            const compileBtn = document.getElementById('compile-btn');
+            compileBtn.disabled = true;
+            compileBtn.innerHTML = '<span class="loading"></span> Compiling...';
+            
+            try {
+                const response = await fetch('/api/compile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        board: board,
+                        code: currentCode,
+                        name: sketchName
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    addMessage('claude', `✅ Compilation successful!\n\n${result.stdout}`, false);
+                } else {
+                    addMessage('claude', `❌ Compilation failed:\n\n${result.stderr || result.error}`, false);
+                }
+            } catch (error) {
+                addMessage('claude', `❌ Error during compilation: ${error.message}`, false);
+            } finally {
+                compileBtn.disabled = false;
+                compileBtn.textContent = 'Compile';
+            }
+        }
+
+        async function uploadSketch() {
+            const board = document.getElementById('board-select').value;
+            const port = document.getElementById('port-select').value;
+            const sketchName = document.getElementById('sketch-name').value;
+            
+            if (!board || !port) {
+                alert('Please select both board and port');
+                return;
+            }
+            
+            if (!currentCode) {
+                alert('No code to upload. Ask Claude to generate some Arduino code first!');
+                return;
+            }
+            
+            const uploadBtn = document.getElementById('upload-btn');
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<span class="loading"></span> Uploading...';
+            
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        board: board,
+                        port: port,
+                        code: currentCode,
+                        name: sketchName
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    addMessage('claude', `✅ Upload successful!\n\n${result.stdout}`, false);
+                    document.getElementById('board-status').textContent = `Connected: ${port}`;
+                    document.getElementById('board-status').classList.add('connected');
+                } else {
+                    addMessage('claude', `❌ Upload failed:\n\n${result.stderr || result.error}`, false);
+                }
+            } catch (error) {
+                addMessage('claude', `❌ Error during upload: ${error.message}`, false);
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Upload';
+            }
+        }
+
+        async function readSerial() {
+            const port = document.getElementById('port-select').value;
+            
+            if (!port) {
+                alert('Please select a port');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/monitor/${port}?timeout=3`);
+                const result = await response.json();
+                
+                const serialOutput = document.getElementById('serial-output');
+                if (result.success && result.stdout) {
+                    serialOutput.textContent = result.stdout;
+                } else {
+                    serialOutput.textContent = `No data received or error: ${result.stderr || result.error}`;
+                }
+            } catch (error) {
+                document.getElementById('serial-output').textContent = `Error reading serial: ${error.message}`;
+            }
+        }
+
+        // Auto-refresh serial monitor every 5 seconds if a port is selected
+        setInterval(() => {
+            const port = document.getElementById('port-select').value;
+            if (port) {
+                readSerial();
+            }
+        }, 5000);
+    </script>
+</body>
+</html>
