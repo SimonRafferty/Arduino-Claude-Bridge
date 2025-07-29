@@ -261,6 +261,87 @@ app.get('/api/boards/available', async (req, res) => {
     }
 });
 
+// List available sketches
+app.get('/api/sketches', async (req, res) => {
+    try {
+        const sketches = [];
+        const searchDirs = [
+            path.join(__dirname, 'sketches'),
+            sketchbookPath
+        ].filter(dir => dir && fs.existsSync(dir));
+        
+        for (const dir of searchDirs) {
+            try {
+                const items = fs.readdirSync(dir);
+                for (const item of items) {
+                    const itemPath = path.join(dir, item);
+                    if (fs.statSync(itemPath).isDirectory()) {
+                        const sketchFile = path.join(itemPath, `${item}.ino`);
+                        if (fs.existsSync(sketchFile)) {
+                            const stats = fs.statSync(sketchFile);
+                            sketches.push({
+                                name: item,
+                                path: itemPath,
+                                modified: stats.mtime,
+                                source: dir === sketchbookPath ? 'sketchbook' : 'local'
+                            });
+                        }
+                    }
+                }
+            } catch (error) {
+                console.log(`Error reading directory ${dir}:`, error.message);
+            }
+        }
+        
+        // Sort by modification time, newest first
+        sketches.sort((a, b) => new Date(b.modified) - new Date(a.modified));
+        
+        res.json({ success: true, sketches });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Load a specific sketch
+app.get('/api/sketches/:name', async (req, res) => {
+    const { name } = req.params;
+    
+    try {
+        const searchDirs = [
+            path.join(__dirname, 'sketches'),
+            sketchbookPath
+        ].filter(dir => dir && fs.existsSync(dir));
+        
+        let sketchContent = '';
+        let sketchPath = '';
+        
+        for (const dir of searchDirs) {
+            const sketchDir = path.join(dir, name);
+            const sketchFile = path.join(sketchDir, `${name}.ino`);
+            
+            if (fs.existsSync(sketchFile)) {
+                sketchContent = fs.readFileSync(sketchFile, 'utf8');
+                sketchPath = sketchFile;
+                currentSketch = sketchPath;
+                break;
+            }
+        }
+        
+        if (sketchContent) {
+            res.json({ 
+                success: true, 
+                name: name,
+                content: sketchContent,
+                path: sketchPath
+            });
+        } else {
+            res.status(404).json({ error: 'Sketch not found' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Health check
 app.get('/api/health', async (req, res) => {
     try {
