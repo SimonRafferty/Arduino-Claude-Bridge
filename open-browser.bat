@@ -1,0 +1,3 @@
+@echo off
+echo Opening Arduino Claude Bridge in browser...
+start http://localhost:3000
