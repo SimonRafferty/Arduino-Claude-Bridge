@@ -435,13 +435,12 @@
         <div class="arduino-section">
             <div class="arduino-controls">
                 <div class="control-group">
-                    <label for="sketch-load">Load Sketch:</label>
+                    <label for="current-sketch-display">Current Sketch:</label>
                     <div style="display: flex; gap: 0.5rem;">
-                        <select id="sketch-load" style="flex: 1;">
-                            <option value="">Select sketch...</option>
-                        </select>
-                        <button type="button" id="refresh-sketches-btn" style="padding: 0.4rem 0.8rem; background: #444; color: #e0e0e0; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">↻</button>
+                        <input type="text" id="current-sketch-display" readonly style="flex: 1; background: #333; color: #ccc; cursor: default;" placeholder="No sketch loaded" />
+                        <button type="button" id="browse-files-btn" style="padding: 0.4rem 0.8rem; background: #27ae60; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem;">📁 Browse</button>
                     </div>
+                    <input type="file" id="file-input" accept=".ino" style="display: none;" />
                 </div>
 
                 <div class="control-group">
@@ -504,6 +503,7 @@
         let currentSketchName = '';
         let claudeApiKey = '';
         let serialPaused = false; // Track pause state
+        let currentFileDirectory = ''; // Track the directory of currently loaded file
 
         // API Key Management Functions
         function setApiKey() {
@@ -701,54 +701,66 @@
             document.getElementById('api-dropdown').style.display = 'none';
         }
 
-        // Sketch Management Functions
-        async function refreshSketches() {
-            try {
-                const response = await fetch('/api/sketches');
-                const data = await response.json();
-                
-                const sketchSelect = document.getElementById('sketch-load');
-                sketchSelect.innerHTML = '<option value="">Select sketch...</option>';
-                
-                if (data.success && data.sketches) {
-                    data.sketches.forEach(sketch => {
-                        const option = document.createElement('option');
-                        option.value = sketch.name;
-                        const date = new Date(sketch.modified).toLocaleDateString();
-                        const source = sketch.source === 'sketchbook' ? '📁' : '💾';  
-                        option.textContent = `${source} ${sketch.name} (${date})`;
-                        sketchSelect.appendChild(option);
-                    });
-                    
-                    console.log(`Found ${data.sketches.length} sketches`);
-                }
-            } catch (error) {
-                console.error('Error loading sketches:', error);
+        // New function to handle file browsing
+        function setupFileBrowser() {
+            const browseBtn = document.getElementById('browse-files-btn');
+            const fileInput = document.getElementById('file-input');
+            
+            if (!browseBtn || !fileInput) {
+                console.error('Browse button or file input not found');
+                return;
             }
+            
+            browseBtn.addEventListener('click', () => {
+                fileInput.click();
+            });
+            
+            fileInput.addEventListener('change', async (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                if (!file.name.endsWith('.ino')) {
+                    alert('Please select an Arduino sketch file (.ino)');
+                    return;
+                }
+                
+                try {
+                    const content = await file.text();
+                    const fileName = file.name.replace('.ino', '');
+                    
+                    // Load the content into the system
+                    currentCode = content;
+                    currentSketchName = fileName;
+                    
+                    // Update UI
+                    document.getElementById('sketch-name').value = fileName;
+                    updateCurrentSketchDisplay(fileName, 'from file');
+                    document.getElementById('current-sketch-info').textContent = `Loaded from file: ${file.name}`;
+                    
+                    // Show in chat
+                    addMessage('claude', `📂 Loaded sketch "${fileName}" from your computer`, false);
+                    addMessage('claude', content, true);
+                    
+                    console.log(`Loaded sketch from file: ${file.name}`);
+                    
+                    // Clear the file input for next use
+                    fileInput.value = '';
+                    
+                } catch (error) {
+                    console.error('Error reading file:', error);
+                    alert('Error reading the selected file');
+                }
+            });
         }
 
-        async function loadSketch(sketchName) {
-            try {
-                const response = await fetch(`/api/sketches/${sketchName}`);
-                const data = await response.json();
-                
-                if (data.success) {
-                    currentCode = data.content;
-                    currentSketchName = data.name;
-                    
-                    document.getElementById('sketch-name').value = sketchName;
-                    document.getElementById('current-sketch-info').textContent = `Loaded: ${sketchName}`;
-                    
-                    addMessage('claude', `📂 Loaded sketch "${sketchName}"`, false);
-                    addMessage('claude', data.content, true);
-                    
-                    console.log(`Loaded sketch: ${sketchName}`);
-                } else {
-                    alert(`Failed to load sketch: ${data.error}`);
-                }
-            } catch (error) {
-                console.error('Error loading sketch:', error);
-                alert('Error loading sketch');
+        // Sketch Management Functions - Current sketch display only
+        function updateCurrentSketchDisplay(sketchName, source = '') {
+            const displayField = document.getElementById('current-sketch-display');
+            if (sketchName) {
+                displayField.value = sketchName + (source ? ` (${source})` : '');
+            } else {
+                displayField.value = '';
+                displayField.placeholder = 'No sketch loaded';
             }
         }
 
@@ -766,30 +778,70 @@
             }
 
             try {
-                const response = await fetch('/api/sketch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        code: currentCode,
-                        name: sketchName
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    currentSketchName = sketchName;
-                    document.getElementById('current-sketch-info').textContent = `Saved: ${sketchName}`;
-                    addMessage('claude', `💾 Sketch saved as "${sketchName}"`, false);
-                    
-                    refreshSketches();
+                // Check if File System Access API is supported (modern browsers)
+                if ('showSaveFilePicker' in window) {
+                    await saveWithFileSystemAPI(sketchName);
                 } else {
-                    alert(`Failed to save sketch: ${result.error}`);
+                    // Fallback: trigger download for older browsers
+                    await saveWithDownload(sketchName);
                 }
             } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log('Save cancelled by user');
+                    return;
+                }
                 console.error('Error saving sketch:', error);
-                alert('Error saving sketch');
+                // Fallback to download if File System API fails
+                await saveWithDownload(sketchName);
             }
+        }
+
+        async function saveWithFileSystemAPI(sketchName) {
+            try {
+                const fileHandle = await window.showSaveFilePicker({
+                    suggestedName: `${sketchName}.ino`,
+                    types: [{
+                        description: 'Arduino Sketch files',
+                        accept: { 'text/plain': ['.ino'] }
+                    }]
+                });
+                
+                const writable = await fileHandle.createWritable();
+                await writable.write(currentCode);
+                await writable.close();
+                
+                currentSketchName = sketchName;
+                updateCurrentSketchDisplay(sketchName, 'saved');
+                document.getElementById('current-sketch-info').textContent = `Saved: ${sketchName}`;
+                addMessage('claude', `💾 Sketch saved as "${sketchName}" to selected location`, false);
+                
+            } catch (error) {
+                throw error; // Re-throw to trigger fallback
+            }
+        }
+
+        async function saveWithDownload(sketchName) {
+            // Create blob with the sketch content
+            const blob = new Blob([currentCode], { type: 'text/plain' });
+            
+            // Create download link
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${sketchName}.ino`;
+            
+            // Trigger download
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Cleanup
+            URL.revokeObjectURL(url);
+            
+            currentSketchName = sketchName;
+            updateCurrentSketchDisplay(sketchName, 'downloaded');
+            document.getElementById('current-sketch-info').textContent = `Downloaded: ${sketchName}`;
+            addMessage('claude', `💾 Sketch "${sketchName}" downloaded - choose save location in your browser's download dialog`, false);
         }
 
         // Arduino Integration Functions  
@@ -935,6 +987,9 @@
                 messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Claude'}:</strong><div class="code-block">${content}</div>`;
                 if (sender === 'claude') {
                     currentCode = content;
+                    // Update current sketch display when new code is generated
+                    const sketchName = document.getElementById('sketch-name').value || 'Untitled';
+                    updateCurrentSketchDisplay(sketchName, 'generated');
                 }
             } else {
                 messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Claude'}:</strong> ${content}`;
@@ -1096,7 +1151,17 @@ If the user asks for completely new code, you can still reference patterns or ap
                 if (result.success) {
                     addMessage('claude', `✅ Compilation successful!\n\n${result.stdout}`, false);
                 } else {
-                    addMessage('claude', `❌ Compilation failed:\n\n${result.stderr || result.error}`, false);
+                    // Show brief failure message in chat
+                    addMessage('claude', `❌ Compilation failed! Error details have been placed in the input box below - click Send to ask me to fix it.`, false);
+                    
+                    // Put the detailed error in the user input box for easy sending to Claude
+                    const userInput = document.getElementById('user-input');
+                    const errorMessage = `Sketch failed to compile. Please re-write the sketch in full with a fix for this error:\n\n${result.stderr || result.error}`;
+                    userInput.value = errorMessage;
+                    userInput.focus();
+                    
+                    // Scroll to show the input area
+                    userInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             } catch (error) {
                 addMessage('claude', `❌ Error during compilation: ${error.message}`, false);
@@ -1271,7 +1336,9 @@ If the user asks for completely new code, you can still reference patterns or ap
             loadArduinoConfig();
             loadAvailableBoards();
             refreshPorts();
-            refreshSketches();
+            
+            // Setup file browser functionality
+            setupFileBrowser();
             
             // Event listeners
             document.getElementById('connect-btn').addEventListener('click', setApiKey);
@@ -1279,7 +1346,6 @@ If the user asks for completely new code, you can still reference patterns or ap
             document.getElementById('update-btn').addEventListener('click', updateApiKey);
             document.getElementById('clear-btn').addEventListener('click', clearApiKey);
             document.getElementById('send-btn').addEventListener('click', sendMessage);
-            document.getElementById('refresh-sketches-btn').addEventListener('click', refreshSketches);
             document.getElementById('save-sketch-btn').addEventListener('click', saveCurrentSketch);
             document.getElementById('refresh-ports-btn').addEventListener('click', refreshPorts);
             document.getElementById('compile-btn').addEventListener('click', compileSketch);
@@ -1320,12 +1386,6 @@ If the user asks for completely new code, you can still reference patterns or ap
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     sendMessage();
-                }
-            });
-            
-            document.getElementById('sketch-load').addEventListener('change', function(e) {
-                if (e.target.value) {
-                    loadSketch(e.target.value);
                 }
             });
             
