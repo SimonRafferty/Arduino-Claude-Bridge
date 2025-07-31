@@ -1,5 +1,5 @@
 const express = require('express');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -79,6 +79,108 @@ function runCommandWithTimeout(command, timeoutMs = 5000) {
     });
 }
 
+// Enhanced function to find preferred sketch directory
+function getPreferredSketchDirectory() {
+    // Priority 1: Arduino IDE sketchbook location
+    if (sketchbookPath && fs.existsSync(sketchbookPath)) {
+        console.log('Using Arduino IDE sketchbook:', sketchbookPath);
+        return sketchbookPath;
+    }
+    
+    // Priority 2: Try to find Arduino sketchbook in standard locations
+    const possibleSketchbookPaths = [
+        path.join(os.homedir(), 'Documents', 'Arduino'),
+        path.join(os.homedir(), 'Arduino'),
+        path.join(os.homedir(), 'Sketchbook')
+    ];
+    
+    for (const sketchPath of possibleSketchbookPaths) {
+        if (fs.existsSync(sketchPath)) {
+            console.log('Found Arduino sketchbook at:', sketchPath);
+            return sketchPath;
+        }
+    }
+    
+    // Priority 3: User Documents folder
+    const documentsPath = path.join(os.homedir(), 'Documents', 'Arduino Sketches');
+    console.log('Using Documents folder:', documentsPath);
+    
+    // Create the directory if it doesn't exist
+    if (!fs.existsSync(documentsPath)) {
+        fs.mkdirSync(documentsPath, { recursive: true });
+    }
+    
+    return documentsPath;
+}
+
+// Enhanced function to discover Arduino configuration
+async function discoverArduinoConfig() {
+    console.log('Discovering Arduino configuration...');
+    
+    try {
+        // Method 1: Try arduino-cli config
+        const configResult = await runCommand('arduino-cli config dump');
+        if (configResult.success) {
+            const lines = configResult.stdout.split('\n');
+            const sketchbookLine = lines.find(line => line.includes('sketchbook'));
+            if (sketchbookLine) {
+                const match = sketchbookLine.match(/sketchbook.*?:\s*(.+)/);
+                if (match) {
+                    const foundPath = match[1].replace(/['"]/g, '').trim();
+                    if (fs.existsSync(foundPath)) {
+                        sketchbookPath = foundPath;
+                        console.log('✅ Found Arduino sketchbook via CLI config:', sketchbookPath);
+                        return;
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.log('Arduino CLI config not available:', error.message);
+    }
+    
+    try {
+        // Method 2: Try Arduino IDE preferences file (Windows)
+        const prefsPath = path.join(os.homedir(), 'AppData', 'Roaming', 'Arduino15', 'preferences.txt');
+        if (fs.existsSync(prefsPath)) {
+            const prefs = fs.readFileSync(prefsPath, 'utf8');
+            const lines = prefs.split('\n');
+            const sketchbookLine = lines.find(line => line.startsWith('sketchbook.path='));
+            if (sketchbookLine) {
+                const foundPath = sketchbookLine.split('=')[1].trim();
+                if (fs.existsSync(foundPath)) {
+                    sketchbookPath = foundPath;
+                    console.log('✅ Found Arduino sketchbook via IDE preferences:', sketchbookPath);
+                    return;
+                }
+            }
+        }
+    } catch (error) {
+        console.log('Could not read Arduino IDE preferences:', error.message);
+    }
+    
+    try {
+        // Method 3: Try common default locations
+        const defaultPaths = [
+            path.join(os.homedir(), 'Documents', 'Arduino'),
+            path.join(os.homedir(), 'Arduino'),
+            path.join(os.homedir(), 'Sketchbook')
+        ];
+        
+        for (const defaultPath of defaultPaths) {
+            if (fs.existsSync(defaultPath)) {
+                sketchbookPath = defaultPath;
+                console.log('✅ Found Arduino sketchbook at default location:', sketchbookPath);
+                return;
+            }
+        }
+    } catch (error) {
+        console.log('Error checking default paths:', error.message);
+    }
+    
+    console.log('ℹ️ No Arduino sketchbook found, will use Documents folder');
+}
+
 // Claude API Proxy - NEW ENDPOINT TO FIX CORS
 app.post('/api/claude', async (req, res) => {
     const { apiKey, ...claudeRequest } = req.body;
@@ -141,19 +243,27 @@ app.get('/api/cores', async (req, res) => {
     }
 });
 
-// Save sketch
+// Modified save sketch endpoint with preferred location support
 app.post('/api/sketch', async (req, res) => {
-    const { code, name = 'sketch', useSketchbook = false } = req.body;
+    const { code, name = 'sketch', usePreferredLocation = false } = req.body;
     
     try {
         let baseDir;
+        let locationDescription;
         
-        // Try to use Arduino sketchbook folder if requested and available
-        if (useSketchbook && sketchbookPath && fs.existsSync(sketchbookPath)) {
-            baseDir = sketchbookPath;
+        if (usePreferredLocation) {
+            // Use the preferred location (Arduino sketchbook or Documents)
+            baseDir = getPreferredSketchDirectory();
+            
+            if (baseDir.includes('Arduino') && baseDir !== path.join(__dirname, 'sketches')) {
+                locationDescription = 'Arduino sketchbook';
+            } else {
+                locationDescription = 'Documents folder';
+            }
         } else {
-            // Fallback to local sketches folder
+            // Fallback to local sketches folder (backward compatibility)
             baseDir = path.join(__dirname, 'sketches');
+            locationDescription = 'local project folder';
         }
         
         // Create sketch directory
@@ -168,12 +278,16 @@ app.post('/api/sketch', async (req, res) => {
         
         currentSketch = sketchPath;
         
+        console.log(`Sketch "${name}" saved to: ${sketchPath}`);
+        
         res.json({ 
             success: true, 
-            message: `Sketch saved to ${useSketchbook ? 'Arduino sketchbook' : 'local folder'}`,
-            path: sketchPath 
+            message: `Sketch saved to ${locationDescription}`,
+            path: sketchPath,
+            location: locationDescription
         });
     } catch (error) {
+        console.error('Error saving sketch:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -252,8 +366,6 @@ app.get('/api/monitor/:port', async (req, res) => {
     const { baud = 9600, timeout = 5 } = req.query;
     
     try {
-        const { spawn } = require('child_process');
-        
         // Apply local executable check and handle paths properly
         let arduinoCliPath = 'arduino-cli';
         const localArduinoCli = path.join(__dirname, 'arduino-cli.exe');
@@ -390,45 +502,18 @@ app.post('/api/library/install', async (req, res) => {
     }
 });
 
-// Get Arduino configuration and sketchbook location
+// Enhanced config endpoint
 app.get('/api/config', async (req, res) => {
     try {
         const configResult = await runCommand('arduino-cli config dump');
-        let sketchbookPath = '';
-        
-        if (configResult.success) {
-            // Try to extract sketchbook path from config
-            const lines = configResult.stdout.split('\n');
-            const sketchbookLine = lines.find(line => line.includes('sketchbook'));
-            if (sketchbookLine) {
-                const match = sketchbookLine.match(/sketchbook.*?:\s*(.+)/);
-                if (match) sketchbookPath = match[1].replace(/['"]/g, '').trim();
-            }
-        }
-        
-        // Fallback: try Arduino IDE preferences file
-        if (!sketchbookPath) {
-            const os = require('os');
-            const prefsPath = path.join(os.homedir(), 'AppData', 'Roaming', 'Arduino15', 'preferences.txt');
-            
-            try {
-                if (fs.existsSync(prefsPath)) {
-                    const prefs = fs.readFileSync(prefsPath, 'utf8');
-                    const lines = prefs.split('\n');
-                    const sketchbookLine = lines.find(line => line.startsWith('sketchbook.path='));
-                    if (sketchbookLine) {
-                        sketchbookPath = sketchbookLine.split('=')[1].trim();
-                    }
-                }
-            } catch (error) {
-                console.log('Could not read Arduino preferences:', error.message);
-            }
-        }
+        const preferredDir = getPreferredSketchDirectory();
         
         res.json({ 
             success: true, 
-            config: configResult.stdout,
-            sketchbookPath: sketchbookPath || 'Not found'
+            config: configResult.success ? configResult.stdout : 'Config not available',
+            sketchbookPath: sketchbookPath || 'Not found',
+            preferredSketchDirectory: preferredDir,
+            isArduinoSketchbook: preferredDir.includes('Arduino')
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -445,14 +530,20 @@ app.get('/api/boards/available', async (req, res) => {
     }
 });
 
-// List available sketches
+// Enhanced sketch listing endpoint
 app.get('/api/sketches', async (req, res) => {
     try {
         const sketches = [];
+        const preferredDir = getPreferredSketchDirectory();
+        
         const searchDirs = [
-            path.join(__dirname, 'sketches'),
-            sketchbookPath
-        ].filter(dir => dir && fs.existsSync(dir));
+            preferredDir,
+            path.join(__dirname, 'sketches') // Keep local sketches as backup
+        ].filter((dir, index, self) => 
+            dir && fs.existsSync(dir) && self.indexOf(dir) === index // Remove duplicates
+        );
+        
+        console.log('Searching for sketches in:', searchDirs);
         
         for (const dir of searchDirs) {
             try {
@@ -463,11 +554,20 @@ app.get('/api/sketches', async (req, res) => {
                         const sketchFile = path.join(itemPath, `${item}.ino`);
                         if (fs.existsSync(sketchFile)) {
                             const stats = fs.statSync(sketchFile);
+                            
+                            // Determine source type
+                            let source = 'local';
+                            if (dir === preferredDir && preferredDir.includes('Arduino')) {
+                                source = 'sketchbook';
+                            } else if (dir === preferredDir) {
+                                source = 'documents';
+                            }
+                            
                             sketches.push({
                                 name: item,
                                 path: itemPath,
                                 modified: stats.mtime,
-                                source: dir === sketchbookPath ? 'sketchbook' : 'local'
+                                source: source
                             });
                         }
                     }
@@ -480,8 +580,10 @@ app.get('/api/sketches', async (req, res) => {
         // Sort by modification time, newest first
         sketches.sort((a, b) => new Date(b.modified) - new Date(a.modified));
         
+        console.log(`Found ${sketches.length} total sketches`);
         res.json({ success: true, sketches });
     } catch (error) {
+        console.error('Error listing sketches:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -491,10 +593,13 @@ app.get('/api/sketches/:name', async (req, res) => {
     const { name } = req.params;
     
     try {
+        const preferredDir = getPreferredSketchDirectory();
         const searchDirs = [
-            path.join(__dirname, 'sketches'),
-            sketchbookPath
-        ].filter(dir => dir && fs.existsSync(dir));
+            preferredDir,
+            path.join(__dirname, 'sketches')
+        ].filter((dir, index, self) => 
+            dir && fs.existsSync(dir) && self.indexOf(dir) === index
+        );
         
         let sketchContent = '';
         let sketchPath = '';
@@ -536,8 +641,6 @@ app.get('/api/monitor-direct/:port', async (req, res) => {
     
     try {
         // Try to read serial port directly using built-in Node.js approach
-        const { spawn } = require('child_process');
-        
         // Apply local executable check and handle paths with spaces
         let arduinoCliPath = 'arduino-cli';
         const localArduinoCli = path.join(__dirname, 'arduino-cli.exe');
@@ -645,49 +748,29 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-// Start server
+// Start server with enhanced configuration discovery
 app.listen(PORT, async () => {
-    console.log(`Arduino Bridge Server running on http://localhost:${PORT}`);
+    console.log(`\n🚀 Arduino Bridge Server running on http://localhost:${PORT}`);
     console.log('Make sure Arduino CLI is installed and available in PATH');
     
-    // Create sketches directory
+    // Create local sketches directory (fallback)
     const sketchesDir = path.join(__dirname, 'sketches');
     if (!fs.existsSync(sketchesDir)) {
         fs.mkdirSync(sketchesDir, { recursive: true });
     }
     
-    // Try to load Arduino configuration and sketchbook path
-    try {
-        const configResult = await runCommand('arduino-cli config dump');
-        if (configResult.success) {
-            const lines = configResult.stdout.split('\n');
-            const sketchbookLine = lines.find(line => line.includes('sketchbook'));
-            if (sketchbookLine) {
-                const match = sketchbookLine.match(/sketchbook.*?:\s*(.+)/);
-                if (match) {
-                    sketchbookPath = match[1].replace(/['"]/g, '').trim();
-                    console.log(`Found Arduino sketchbook: ${sketchbookPath}`);
-                }
-            }
-        }
-        
-        // Fallback: try Arduino IDE preferences file
-        if (!sketchbookPath) {
-            const prefsPath = path.join(os.homedir(), 'AppData', 'Roaming', 'Arduino15', 'preferences.txt');
-            
-            if (fs.existsSync(prefsPath)) {
-                const prefs = fs.readFileSync(prefsPath, 'utf8');
-                const lines = prefs.split('\n');
-                const sketchbookLine = lines.find(line => line.startsWith('sketchbook.path='));
-                if (sketchbookLine) {
-                    sketchbookPath = sketchbookLine.split('=')[1].trim();
-                    console.log(`Found Arduino sketchbook from IDE preferences: ${sketchbookPath}`);
-                }
-            }
-        }
-    } catch (error) {
-        console.log('Could not determine Arduino sketchbook location:', error.message);
-    }
+    // Discover Arduino configuration
+    await discoverArduinoConfig();
+    
+    // Show preferred sketch directory
+    const preferredDir = getPreferredSketchDirectory();
+    console.log(`📁 Preferred sketch directory: ${preferredDir}`);
+    
+    // Show startup message
+    console.log('\n=================================');
+    console.log('  ✅ Server ready!');  
+    console.log('  🌐 Open: http://localhost:3000');
+    console.log('=================================\n');
 });
 
 module.exports = app;
