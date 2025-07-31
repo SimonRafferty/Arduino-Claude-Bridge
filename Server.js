@@ -333,9 +333,11 @@ app.post('/api/upload', async (req, res) => {
     }
     
     try {
-        // Save sketch first if provided
+        let sketchDir;
+        
+        // Save sketch first if provided, using same directory structure as compile
         if (code) {
-            const sketchDir = path.join(__dirname, 'sketches', name);
+            sketchDir = path.join(__dirname, 'sketches', name);
             if (!fs.existsSync(sketchDir)) {
                 fs.mkdirSync(sketchDir, { recursive: true });
             }
@@ -343,13 +345,26 @@ app.post('/api/upload', async (req, res) => {
             const sketchPath = path.join(sketchDir, `${name}.ino`);
             fs.writeFileSync(sketchPath, code);
             currentSketch = sketchPath;
+        } else {
+            // Use the directory from the current sketch
+            sketchDir = path.dirname(currentSketch);
         }
         
         currentBoard = board;
         currentPort = port;
         
-        // Upload with longer timeout
-        const sketchDir = path.dirname(currentSketch);
+        // Ensure sketch directory exists and has .ino file
+        const expectedSketchFile = path.join(sketchDir, `${name}.ino`);
+        if (!fs.existsSync(expectedSketchFile)) {
+            return res.status(400).json({ 
+                error: `Sketch file not found: ${expectedSketchFile}. Please compile first.` 
+            });
+        }
+        
+        console.log(`Upload using sketch directory: ${sketchDir}`);
+        console.log(`Upload using sketch file: ${expectedSketchFile}`);
+        
+        // Upload with longer timeout - use the same directory structure as compile
         const uploadCommand = `arduino-cli upload -p ${port} --fqbn ${board} "${sketchDir}"`;
         console.log('Uploading:', uploadCommand);
         
