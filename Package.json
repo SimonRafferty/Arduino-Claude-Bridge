@@ -1,7 +1,7 @@
 {
   "name": "arduino-claude-bridge",
   "version": "1.0.0",
-  "description": "A web-based bridge between Claude AI and Arduino CLI for seamless development",
+  "description": "A web-based development tool that connects Claude AI with Arduino CLI for embedded development",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,25 +11,20 @@
     "arduino",
     "claude",
     "ai",
-    "embedded",
     "development",
-    "microcontroller",
-    "esp32",
-    "teensy",
-    "samd21",
-    "prototyping",
-    "iot"
+    "embedded"
   ],
-  "author": "Arduino Development Team",
+  "author": "Simon Rafferty",
   "license": "MIT",
   "dependencies": {
     "express": "^4.18.2",
+    "node-fetch": "^3.3.2",
     "cors": "^2.8.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   }
 }

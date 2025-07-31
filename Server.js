@@ -20,7 +20,7 @@ let currentPort = '';
 let sketchbookPath = '';
 
 // Helper function to run shell commands (original)
-function runCommand(command) {
+function runCommand(command, timeoutMs = 5000) {
     return new Promise((resolve, reject) => {
         // If command starts with 'arduino-cli', try local executable first
         if (command.startsWith('arduino-cli')) {
@@ -30,13 +30,21 @@ function runCommand(command) {
             }
         }
         
-        exec(command, (error, stdout, stderr) => {
+        const child = exec(command, (error, stdout, stderr) => {
             if (error) {
                 resolve({ success: false, error: error.message, stdout, stderr });
             } else {
                 resolve({ success: true, stdout, stderr });
             }
         });
+        
+        // Kill after timeout
+        setTimeout(() => {
+            if (child && !child.killed) {
+                child.kill('SIGTERM');
+                resolve({ success: false, error: 'Timeout', stdout: '', stderr: 'Command timed out' });
+            }
+        }, timeoutMs);
     });
 }
 
@@ -70,6 +78,48 @@ function runCommandWithTimeout(command, timeoutMs = 5000) {
         }, timeoutMs);
     });
 }
+
+// Claude API Proxy - NEW ENDPOINT TO FIX CORS
+app.post('/api/claude', async (req, res) => {
+    const { apiKey, ...claudeRequest } = req.body;
+    
+    if (!apiKey) {
+        return res.status(400).json({ error: 'API key required' });
+    }
+    
+    try {
+        // Dynamic import for fetch (Node.js 18+)
+        const fetch = (await import('node-fetch')).default;
+        
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify(claudeRequest)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.text();
+            console.error('Anthropic API error:', response.status, errorData);
+            return res.status(response.status).json({ 
+                error: `API request failed: ${response.status} ${response.statusText}`,
+                details: errorData
+            });
+        }
+
+        const data = await response.json();
+        res.json(data);
+    } catch (error) {
+        console.error('Claude API error:', error);
+        res.status(500).json({ 
+            error: 'Failed to connect to Claude API',
+            details: error.message 
+        });
+    }
+});
 
 // Get available boards and ports
 app.get('/api/boards', async (req, res) => {
@@ -149,11 +199,11 @@ app.post('/api/compile', async (req, res) => {
         currentSketch = sketchPath;
         currentBoard = board;
         
-        // Compile
+        // Compile with longer timeout (60 seconds for first-time downloads)
         const compileCommand = `arduino-cli compile --fqbn ${board} "${sketchDir}"`;
         console.log('Compiling:', compileCommand);
         
-        const result = await runCommand(compileCommand);
+        const result = await runCommand(compileCommand, 60000); // 60 second timeout
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -184,19 +234,19 @@ app.post('/api/upload', async (req, res) => {
         currentBoard = board;
         currentPort = port;
         
-        // Upload
+        // Upload with longer timeout
         const sketchDir = path.dirname(currentSketch);
         const uploadCommand = `arduino-cli upload -p ${port} --fqbn ${board} "${sketchDir}"`;
         console.log('Uploading:', uploadCommand);
         
-        const result = await runCommand(uploadCommand);
+        const result = await runCommand(uploadCommand, 45000); // 45 second timeout
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// Serial monitor (updated to use working spawn method)
+// Serial monitor (FIXED VERSION - properly captures streaming data)
 app.get('/api/monitor/:port', async (req, res) => {
     const { port } = req.params;
     const { baud = 9600, timeout = 5 } = req.query;
@@ -204,103 +254,113 @@ app.get('/api/monitor/:port', async (req, res) => {
     try {
         const { spawn } = require('child_process');
         
-        // Apply local executable check and handle paths with spaces properly
+        // Apply local executable check and handle paths properly
         let arduinoCliPath = 'arduino-cli';
         const localArduinoCli = path.join(__dirname, 'arduino-cli.exe');
         if (fs.existsSync(localArduinoCli)) {
-            arduinoCliPath = localArduinoCli; // No quotes needed for spawn
+            arduinoCliPath = localArduinoCli;
         }
         
-        console.log(`Starting serial monitor: ${arduinoCliPath} monitor -p ${port} --config baudrate=${baud}`);
+        console.log(`📡 REGULAR MONITOR: Starting arduino-cli monitor for ${port} at ${baud} baud`);
         
-        // Create a promise that resolves with collected output after timeout
+        // Create a promise that collects streaming data
         const result = await new Promise((resolve) => {
             let output = '';
             let errorOutput = '';
             let dataReceived = false;
-            let dataChunks = [];
             
-            // Use spawn with proper path handling
+            // Spawn arduino-cli monitor with proper streaming setup
             const child = spawn(arduinoCliPath, ['monitor', '-p', port, '--config', `baudrate=${baud}`], {
-                stdio: ['pipe', 'pipe', 'pipe']
+                stdio: ['pipe', 'pipe', 'pipe'],
+                shell: false  // Don't use shell to avoid quote issues
             });
             
-            console.log('Serial monitor process started, PID:', child.pid);
+            console.log(`📡 REGULAR MONITOR: Process spawned, PID: ${child.pid}`);
             
-            // Collect data as it comes in
+            // Handle stdout data (this is where arduino data comes from)
             child.stdout.on('data', (data) => {
                 const dataStr = data.toString();
-                output += dataStr;
-                dataReceived = true;
-                dataChunks.push(dataStr);
-                console.log('📡 SERIAL DATA RECEIVED:', JSON.stringify(dataStr));
-                console.log('📡 SERIAL DATA (readable):', dataStr.replace(/\r/g, '\\r').replace(/\n/g, '\\n'));
+                // Skip the initial "Monitor port settings" header
+                if (!dataStr.includes('Monitor port settings') && 
+                    !dataStr.includes('Connecting to') && 
+                    !dataStr.includes('Press CTRL-C') &&
+                    dataStr.trim() !== '') {
+                    
+                    output += dataStr;
+                    dataReceived = true;
+                    console.log(`📡 REGULAR MONITOR: Received data:`, JSON.stringify(dataStr.trim()));
+                }
             });
             
+            // Handle stderr 
             child.stderr.on('data', (data) => {
                 const errorStr = data.toString();
                 errorOutput += errorStr;
-                console.log('❌ Serial error output:', errorStr.trim());
+                console.log(`📡 REGULAR MONITOR: stderr:`, errorStr.trim());
             });
             
             // Handle process events
-            child.on('spawn', () => {
-                console.log('✅ Serial monitor process spawned successfully');
-            });
-            
             child.on('error', (error) => {
-                console.log('❌ Serial monitor spawn error:', error.message);
+                console.log(`📡 REGULAR MONITOR: spawn error:`, error.message);
                 resolve({ 
                     success: false, 
                     stdout: '', 
                     stderr: `Spawn error: ${error.message}`,
-                    method: 'spawn-fixed'
+                    method: 'regular-monitor'
                 });
             });
             
             child.on('exit', (code, signal) => {
-                console.log(`🔚 Serial monitor exited with code ${code}, signal ${signal}`);
-                console.log(`📊 Total data chunks received: ${dataChunks.length}`);
-                console.log(`📊 Total characters received: ${output.length}`);
+                console.log(`📡 REGULAR MONITOR: Process exited: code=${code}, signal=${signal}`);
             });
             
-            // Set timeout to kill process and return collected data
+            // Set timeout to collect data then kill process
             setTimeout(() => {
-                console.log(`⏰ Timeout reached (${timeout}s), terminating serial monitor...`);
+                console.log(`📡 REGULAR MONITOR: Timeout reached, killing process...`);
                 
                 if (child && !child.killed) {
-                    console.log('🔪 Killing serial monitor process...');
                     child.kill('SIGTERM');
                 }
                 
-                console.log(`📈 Final data summary:`);
+                console.log(`📡 REGULAR MONITOR: Final results:`);
                 console.log(`   - Data received: ${dataReceived}`);
                 console.log(`   - Output length: ${output.length}`);
-                console.log(`   - Error length: ${errorOutput.length}`);
-                console.log(`   - Raw output:`, JSON.stringify(output));
+                console.log(`   - Raw output: ${JSON.stringify(output)}`);
                 
                 if (dataReceived && output.trim()) {
-                    console.log('✅ Returning successful result with data');
-                    resolve({ success: true, stdout: output.trim(), stderr: errorOutput });
-                } else if (errorOutput.trim()) {
-                    console.log('❌ Returning error result');
-                    resolve({ success: false, stdout: '', stderr: errorOutput.trim() });
-                } else {
-                    console.log('⚠️ No data received, returning timeout message');
                     resolve({ 
                         success: true, 
+                        stdout: output.trim(), 
+                        stderr: errorOutput,
+                        method: 'regular-monitor'
+                    });
+                } else if (errorOutput.trim()) {
+                    resolve({ 
+                        success: false, 
                         stdout: '', 
-                        stderr: `No data received at ${baud} baud in ${timeout}s. Check: 1) Arduino is sending data, 2) Correct baud rate (${baud}), 3) Port ${port} is not busy, 4) Serial cable connected` 
+                        stderr: errorOutput.trim(),
+                        method: 'regular-monitor'
+                    });
+                } else {
+                    resolve({ 
+                        success: false, 
+                        stdout: '', 
+                        stderr: `No data received at ${baud} baud in ${timeout}s`,
+                        method: 'regular-monitor'
                     });
                 }
             }, timeout * 1000);
         });
         
-        console.log('📤 Sending response to client:', result);
+        console.log(`📡 REGULAR MONITOR: Sending response:`, result);
         res.json(result);
+        
     } catch (error) {
-        console.error('💥 Serial monitor error:', error);
-        res.status(500).json({ error: error.message });
+        console.error(`📡 REGULAR MONITOR: Error:`, error);
+        res.status(500).json({ 
+            error: error.message,
+            method: 'regular-monitor'
+        });
     }
 });
 
@@ -570,28 +630,6 @@ app.get('/api/monitor-direct/:port', async (req, res) => {
         res.status(500).json({ error: error.message, method: 'direct-spawn' });
     }
 });
-
-// Helper function with timeout
-function runCommand(command, timeoutMs = 5000) {
-    return new Promise((resolve, reject) => {
-        console.log(`Running: ${command}`);
-        const child = exec(command, (error, stdout, stderr) => {
-            if (error) {
-                resolve({ success: false, error: error.message, stdout, stderr });
-            } else {
-                resolve({ success: true, stdout, stderr });
-            }
-        });
-        
-        // Kill after timeout
-        setTimeout(() => {
-            if (child && !child.killed) {
-                child.kill('SIGTERM');
-                resolve({ success: false, error: 'Timeout', stdout: '', stderr: 'Command timed out' });
-            }
-        }, timeoutMs);
-    });
-}
 
 // Health check
 app.get('/api/health', async (req, res) => {
