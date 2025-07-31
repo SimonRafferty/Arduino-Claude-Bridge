@@ -1,6 +1,8 @@
 # Arduino Claude Bridge
 
-A web-based development environment that connects Claude AI with Arduino CLI for seamless embedded development. Perfect for rapid prototyping with ESP32, Teensy, and SAMD21 boards.
+A web-based development environment that connects Claude AI with Arduino CLI for seamless embedded development. Perfect for 'Vibe' coding Arduino, ESP & Teensy microcontrollers.
+
+This uses the Arduino Command Line Interface, however it expects the regular Arduino IDE to be installed too.  It uses it to load the profiles for boards you have installed & to grab the preferred folders for the sketchbook & library files.
 
 ## Features
 
